@@ -131,3 +131,18 @@ if(EXISTS "${KULA_GENERATED}/SCES_010.00_full.c")
 else()
     message(STATUS "kula-runtime: games/kula/generated/SCES_010.00_full.c not found - skipping")
 endif()
+
+# ---- Tekken 3 target (SLUS-00402) ----
+set(TEKKEN3_GENERATED "${PSXRECOMP_ROOT}/games/tekken3/generated")
+if(EXISTS "${TEKKEN3_GENERATED}/SLUS_004.02_full.c")
+    psxrecomp_add_runtime_target(tekken3-runtime
+        GAME_GENERATED_FULL_C     "${TEKKEN3_GENERATED}/SLUS_004.02_full.c"
+        GAME_GENERATED_DISPATCH_C "${TEKKEN3_GENERATED}/SLUS_004.02_dispatch.c"
+        DEBUG_PORT 4370
+        WINDOW_TITLE "Tekken 3 (PSXRecomp)"
+        DEFAULT_BIOS_PATH "${PSXRECOMP_ROOT}/bios/SCPH1001.BIN"
+        DEFAULT_GAME_CONFIG_PATH "${PSXRECOMP_ROOT}/games/tekken3/game.toml"
+    )
+else()
+    message(STATUS "tekken3-runtime: games/tekken3/generated/SLUS_004.02_full.c not found - skipping")
+endif()

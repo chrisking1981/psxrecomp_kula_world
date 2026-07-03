@@ -1,0 +1,4 @@
+# Tekken 3 (SLUS-00402) — additional function-discovery seeds.
+# Empty for now: discovery walks the call graph from entry_pc (0x80079C70).
+# Add addresses here (one hex per line) for functions only reachable via
+# indirect jumps that the call-graph walk cannot see.

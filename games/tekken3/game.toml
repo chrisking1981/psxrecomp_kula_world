@@ -1,0 +1,25 @@
+# Tekken 3 (USA) — SLUS-00402
+# Values read from the PS-X EXE header of SLUS_004.02 (extracted from the
+# disc at \TEKKEN3\SLUS_004.02, LBA 25). Addresses are already KSEG0.
+
+[game]
+name         = "Tekken 3"
+id           = "SLUS-00402"
+exe          = "games/tekken3/SLUS_004.02"
+load_address = "0x80010000"
+entry_pc     = "0x80079C70"
+text_size    = "0x121000"
+stack_base   = "0x801FFFF0"
+disc         = "games/tekken3/Tekken 3 (USA).cue"
+
+[recompiler]
+# No Ghidra seeds yet — discovery walks the call graph from entry_pc alone.
+seeds   = "games/tekken3/seeds.txt"
+out_dir = "games/tekken3/generated"
+strict  = true
+
+[runtime]
+debug_port   = 4370
+window_title = "Tekken 3 (PSXRecomp)"
+controller   = "digital"
+memcard_dir  = "."
