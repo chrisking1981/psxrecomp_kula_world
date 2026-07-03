@@ -1706,6 +1706,18 @@ int gl_renderer_init_context(SDL_Window *win) {
     s_win = win;
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
+#ifdef __APPLE__
+    /* macOS only exposes the modern GLSL our shaders need (#version 330) through
+     * a Core-profile context; the default context is legacy GL 2.1, on which
+     * shader compilation fails and the renderer falls back to software. Request
+     * a 3.3 forward-compatible Core context. The renderer is already Core-clean
+     * (VAOs + glVertexAttribPointer, no fixed-function). Windows/Linux keep the
+     * default context, which already provides #version 330. */
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
+#endif
     s_ctx = SDL_GL_CreateContext(win);
     if (!s_ctx) { fprintf(stdout, "psxrecomp: GL context creation failed (%s)\n", SDL_GetError()); return 0; }
     if (SDL_GL_MakeCurrent(win, s_ctx) != 0) { fprintf(stdout, "psxrecomp: MakeCurrent failed (%s)\n", SDL_GetError()); SDL_GL_DeleteContext(s_ctx); s_ctx=NULL; return 0; }

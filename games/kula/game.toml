@@ -24,3 +24,16 @@ debug_port   = 4370
 window_title = "Kula World (PSXRecomp)"
 controller   = "digital"
 memcard_dir  = "."
+
+# Layer-1 visual mod: internal-resolution supersampling (SSAA) + texture
+# filtering + widescreen. Pure renderer knobs — no game-code or recompile
+# change. renderer="opengl" moves the pixel work to the GPU so 4x stays smooth
+# (the software rasteriser does every pixel on the CPU, which is why 4x felt
+# heavy). aspect_ratio="16:9" opts into the widescreen (wider FOV) path.
+[video]
+renderer          = "opengl"   # GPU rasterises -> smooth even at 4x
+supersampling     = 4          # 1..4 — 4x internal res, smooths 3D edges
+antialiasing      = true
+texture_filtering = "bilinear" # smooths surface textures
+aspect_ratio      = "16:9"     # widescreen
+vsync             = "on"
