@@ -729,6 +729,10 @@ int dirty_ram_xprobe_json(char *out, int cap) {
 #ifdef PSX_HAS_GAME_DISPATCH
 static int interp_enter_compiled(CPUState *cpu, uint32_t target) {
     if (target == 0x8001A954u) site_note(&g_site_interp);
+    /* Text-divergence guard: never hand control to the static recompile of
+     * a page the game rewrote at runtime (Tekken 3 unpack) — decline so the
+     * caller keeps interpreting the real RAM bytes. */
+    if (!dirty_ram_text_native_ok(target & 0x1FFFFFFFu)) return 0;
     if (psx_mixed_owner_enabled()
         && interp_host_stack_used() > psx_mixed_stack_watermark()) {
         cpu->pc = target;
@@ -1354,8 +1358,13 @@ static int dirty_ram_dispatch_inner(CPUState* cpu, uint32_t addr, uint32_t stop_
 
 #ifdef PSX_HAS_GAME_DISPATCH
     xprobe_event(cpu->gpr[31], XOP_DD, XSITE_DD, addr, 0u, cpu->gpr[29], cpu->gpr[31], 0);
-    g_mixed_depth++;
-    { int _gc = psx_dispatch_game_compiled(cpu, addr); g_mixed_depth--; if (_gc) return 1; }
+    /* Text-divergence guard: a runtime-rewritten text page (Tekken 3 unpack)
+     * must be interpreted from RAM below, never run as its stale static
+     * recompile. */
+    if (dirty_ram_text_native_ok(phys)) {
+        g_mixed_depth++;
+        { int _gc = psx_dispatch_game_compiled(cpu, addr); g_mixed_depth--; if (_gc) return 1; }
+    }
 #endif
 
     /* B-2: statically-compiled overlay functions (generated/overlays_static.c).

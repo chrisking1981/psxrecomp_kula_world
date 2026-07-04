@@ -114,6 +114,80 @@ uint32_t dirty_ram_get_bitmap_word_count(void) {
     return DIRTY_RAM_BITMAP_WORDS;
 }
 
+/* ---- Game-text divergence guard (fail-closed native entry) --------------
+ *
+ * Some games rewrite part of their own loaded text at runtime (Tekken 3
+ * unpacks ~448 KB of real code over a packed section of its EXE image and
+ * calls straight into it). The static recompile of those bytes is garbage;
+ * running it corrupts $sp and exits to PC=0. The dirty bitmap alone cannot
+ * catch this: the BIOS loads the whole EXE by CD-DMA, so ALL text pages are
+ * dirty from the start and psx_dispatch_game_compiled has always been the
+ * trusted fast path for them.
+ *
+ * Guard: main.cpp registers the PS-X EXE image bytes as the reference. A
+ * guest store inside the text range that writes a value DIFFERENT from the
+ * reference marks its page "modified" (the initial CD-DMA load writes the
+ * image bytes themselves, so it marks nothing; data writes to globals inside
+ * the image mark their pages). Dispatch asks dirty_ram_text_native_ok():
+ * clean page -> native; modified page -> compare a prefix at the target
+ * against the reference -> match: still native (data write elsewhere in the
+ * page); mismatch: page is sticky-diverged and every dispatch into it goes
+ * to the dirty-RAM interpreter, which executes the REAL bytes from RAM.
+ * BIOS-only builds never register an image, so the guard is inert. */
+static const uint8_t *text_ref_image = NULL;   /* EXE image (post-header) */
+static uint32_t text_ref_lo = 0, text_ref_hi = 0;   /* phys byte range   */
+static uint32_t text_modified_bitmap[DIRTY_RAM_BITMAP_WORDS];
+static uint32_t text_diverged_bitmap[DIRTY_RAM_BITMAP_WORDS];
+static uint64_t g_text_native_blocked = 0;   /* dispatches sent to interp */
+static uint32_t g_text_diverged_pages = 0;
+
+void dirty_ram_register_text_image(uint32_t phys_lo, const uint8_t *bytes,
+                                   uint32_t len) {
+    if (!bytes || len == 0 || phys_lo >= RAM_SIZE) return;
+    if (len > RAM_SIZE - phys_lo) len = RAM_SIZE - phys_lo;
+    text_ref_image = bytes;
+    text_ref_lo = phys_lo;
+    text_ref_hi = phys_lo + len;
+}
+
+static inline void text_guard_note_write(uint32_t phys, uint32_t val, int size) {
+    if (!text_ref_image) return;
+    if (phys < text_ref_lo || phys + (uint32_t)size > text_ref_hi) return;
+    const uint8_t *ref = text_ref_image + (phys - text_ref_lo);
+    uint8_t buf[4] = { (uint8_t)val, (uint8_t)(val >> 8),
+                       (uint8_t)(val >> 16), (uint8_t)(val >> 24) };
+    if (memcmp(ref, buf, (size_t)size) != 0) {
+        uint32_t page = phys >> DIRTY_RAM_PAGE_SHIFT;
+        text_modified_bitmap[page >> 5] |= (1u << (page & 31u));
+    }
+}
+
+int dirty_ram_text_native_ok(uint32_t phys) {
+    if (!text_ref_image || phys < text_ref_lo || phys >= text_ref_hi)
+        return 1;                          /* outside guard scope: trust */
+    uint32_t page = phys >> DIRTY_RAM_PAGE_SHIFT;
+    uint32_t bit = 1u << (page & 31u);
+    if (text_diverged_bitmap[page >> 5] & bit) {
+        g_text_native_blocked++;
+        return 0;                          /* known-diverged: interpret */
+    }
+    if (!(text_modified_bitmap[page >> 5] & bit))
+        return 1;                          /* never deviated: trust     */
+    /* A deviating write hit this page. Verify the code at the target
+     * still matches the image before trusting the static recompile. */
+    uint32_t n = 256;
+    if (n > text_ref_hi - phys) n = text_ref_hi - phys;
+    if (memcmp(ram + phys, text_ref_image + (phys - text_ref_lo), n) == 0)
+        return 1;                          /* data write elsewhere in page */
+    text_diverged_bitmap[page >> 5] |= bit;
+    g_text_diverged_pages++;
+    g_text_native_blocked++;
+    return 0;
+}
+
+uint64_t dirty_ram_text_native_blocked(void) { return g_text_native_blocked; }
+uint32_t dirty_ram_text_diverged_pages(void)  { return g_text_diverged_pages; }
+
 void dirty_ram_set_bitmap_words(const uint32_t* words, uint32_t count) {
     if (count > DIRTY_RAM_BITMAP_WORDS) count = DIRTY_RAM_BITMAP_WORDS;
     for (uint32_t i = 0; i < count; i++)
@@ -708,6 +782,7 @@ void psx_write_word(uint32_t addr, uint32_t val) {
         debug_server_trace_write_check(phys, read_ram_word(phys), val, 4);
         card_data_writes_check(phys, val, 4);
         dirty_ram_mark_kernel_write(phys);
+        text_guard_note_write(phys, val, 4);
         overlay_watch_note_write(phys, 4);
         ram[phys]     = (uint8_t)(val);
         ram[phys + 1] = (uint8_t)(val >> 8);
@@ -773,6 +848,7 @@ void psx_write_half(uint32_t addr, uint16_t val) {
         debug_server_trace_write_check(phys, (uint32_t)read_ram_half(phys), (uint32_t)val, 2);
         card_data_writes_check(phys, (uint32_t)val, 2);
         dirty_ram_mark_kernel_write(phys);
+        text_guard_note_write(phys, (uint32_t)val, 2);
         overlay_watch_note_write(phys, 2);
         ram[phys]     = (uint8_t)(val);
         ram[phys + 1] = (uint8_t)(val >> 8);
@@ -852,6 +928,7 @@ void psx_write_byte(uint32_t addr, uint8_t val) {
         debug_server_trace_write_check(phys, (uint32_t)ram[phys], (uint32_t)val, 1);
         card_data_writes_check(phys, (uint32_t)val, 1);
         dirty_ram_mark_kernel_write(phys);
+        text_guard_note_write(phys, (uint32_t)val, 1);
         overlay_watch_note_write(phys, 1);
         ram[phys] = val;
         return;

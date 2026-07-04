@@ -78,6 +78,9 @@ extern "C" uint64_t gte_get_exec_count(void);
 extern "C" void     memory_init(const char* bios_path);
 extern "C" void     memory_set_sr_ptr(const uint32_t *p);
 extern "C" uint32_t memory_get_bios_checksum(void);
+extern "C" void     dirty_ram_register_text_image(uint32_t phys_lo,
+                                                  const uint8_t *bytes,
+                                                  uint32_t len);
 
 /* dma.c */
 extern "C" void dma_init(void);
@@ -1965,6 +1968,34 @@ int main(int argc, char** argv) {
               if (e && e[0] && e[0] != '0') g_gl_fbo_present = 0; }
             game_entry_pc = gc.entry_pc;
             fast_boot     = gc.runtime.fast_boot;
+            /* Text-divergence guard reference image (see memory.c). Load the
+             * PS-X EXE image so the dispatch layer can detect text pages the
+             * game rewrites at runtime (Tekken 3 unpacks ~448 KB of code over
+             * a packed section) and route them to the interpreter instead of
+             * the stale static recompile. Best-effort: without the file the
+             * guard stays inert, which is the pre-guard behavior. */
+            if (!gc.exe_path.empty()) {
+                std::ifstream ef(gc.exe_path, std::ios::binary | std::ios::ate);
+                if (ef) {
+                    std::streamsize sz = ef.tellg();
+                    if (sz > 2048) {
+                        uint32_t img_len = (uint32_t)(sz - 2048);
+                        uint8_t *img = (uint8_t *)std::malloc(img_len);
+                        if (img) {
+                            ef.seekg(2048, std::ios::beg);
+                            if (ef.read((char *)img, img_len)) {
+                                dirty_ram_register_text_image(
+                                    gc.load_address & 0x1FFFFFFFu, img, img_len);
+                                std::fprintf(stdout,
+                                    "psxrecomp: text guard armed (0x%08X..0x%08X)\n",
+                                    gc.load_address, gc.load_address + img_len);
+                            } else {
+                                std::free(img);
+                            }
+                        }
+                    }
+                }
+            }
             /* Overlay DLL cache (Layer A). Off unless enabled in [runtime];
              * when on, capture overlay bytes and scan cache/<game_id>/ for
              * precompiled overlay DLLs. */

@@ -73,6 +73,18 @@ uint32_t dirty_ram_get_bitmap_word(uint32_t word_index);
 uint32_t dirty_ram_get_bitmap_word_count(void);
 void     dirty_ram_mark_executable_range(uint32_t phys, uint32_t len);
 
+/* Game-text divergence guard (memory.c). The runtime registers the PS-X EXE
+ * image as the reference; stores that deviate from it mark their page, and
+ * dirty_ram_text_native_ok() decides per dispatch whether the static native
+ * recompile of a text address is still trustworthy (1) or the page has been
+ * rewritten at runtime and must be interpreted from RAM (0). Inert until an
+ * image is registered (BIOS-only builds never register one). */
+void     dirty_ram_register_text_image(uint32_t phys_lo, const uint8_t *bytes,
+                                       uint32_t len);
+int      dirty_ram_text_native_ok(uint32_t phys);
+uint64_t dirty_ram_text_native_blocked(void);
+uint32_t dirty_ram_text_diverged_pages(void);
+
 /* Counters for visibility / TCP debug.  Increment in interpreter; expose
  * via debug_server.c if helpful. */
 extern uint64_t g_dirty_ram_blocks_run;     /* basic blocks interpreted */

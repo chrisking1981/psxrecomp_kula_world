@@ -1796,7 +1796,9 @@ int psx_sljit_call(CPUState *cpu, uint32_t target, uint32_t return_pc,
                    int check_contract) {
     uint32_t site_sp = cpu->gpr[29];   /* sp at the call (after the delay slot) */
 #ifdef PSX_HAS_GAME_DISPATCH
-    {
+    /* Text-divergence guard (see memory.c): skip the static recompile when
+     * the game rewrote this text page at runtime. */
+    if (dirty_ram_text_native_ok(target & 0x1FFFFFFFu)) {
         extern int psx_dispatch_game_compiled(CPUState *cpu, uint32_t addr);
         cpu->pc = 0;
         if (psx_dispatch_game_compiled(cpu, target)) {

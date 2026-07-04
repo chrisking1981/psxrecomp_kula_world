@@ -1,7 +1,11 @@
 # Tekken 3 (SLUS-00402) — bring-up findings
 
-Status: **recompiles cleanly; first boot crashes on a runtime-installed
-code region.** Not yet playable.
+Status: **boots, plays the intro FMV, and renders the real-time-3D attract
+demo.** The first-boot crash is fixed by the text-divergence guard (below).
+Not yet verified: menu input, an actual fight, audio.
+
+![Tekken 3 intro FMV](assets/tekken3-intro-fmv.png)
+![Tekken 3 attract demo, real-time 3D](assets/tekken3-attract-3d.png)
 
 ## Setup
 
@@ -80,12 +84,44 @@ region at runtime and calls into it. That is the overlay/dirty-RAM frontier
 the framework's existing capture→compile→cache + dirty-RAM machinery, but a
 real multi-round investigation, not a quick win.
 
-### Next steps
+## The fix — text-divergence guard (framework-level)
 
-1. Watchpoint 0x800B8000+ to catch the runtime code-install (which routine,
-   from what source — decompress vs disc-load).
-2. Verify dirty-RAM page tracking marks that region, and why the dispatch to
-   0x800DB12C did not route to the interpreter.
-3. Fix the routing (framework-level: dispatch to a written-since-boot code page
-   must not run the stale static recompile) — a general improvement that also
-   helps other overlay-heavy titles.
+Investigation of the routing showed the dirty bitmap was NOT the hole: the
+BIOS loads the whole EXE via CD-DMA, so every text page was already dirty and
+psx_dispatch_impl did route 0x800DB12C into dirty_ram_dispatch. The hole was
+INSIDE dirty_ram_dispatch_inner: its first step trusts
+`psx_dispatch_game_compiled()` unconditionally — the static recompile is
+assumed valid for all game text, with no check that the bytes in RAM still
+match the bytes the recompiler compiled from. Live polling proved they don't:
+RAM at 0x800DB12C held zeros during BIOS boot, then the packed image bytes,
+then (~4 s later) a real MIPS prologue (`addiu $sp,$sp,-0x20 ...`) — the game
+unpacks real code over the packed section, and one dispatch later the stale
+static garbage ran.
+
+Guard (memory.c, `dirty_ram_text_native_ok`): main.cpp registers the PS-X EXE
+image as a reference. A guest store inside the text range whose value deviates
+from the image marks its 4 KB page "modified" (the CD-DMA load writes image
+bytes, so it marks nothing; data writes to globals inside the image mark their
+pages). On dispatch into a modified page, a 256-byte prefix at the target is
+compared against the image: match → still native (a data write elsewhere in
+the page); mismatch → page is sticky-diverged and every entry into it routes
+to the dirty-RAM interpreter, which executes the real RAM bytes. All three
+native-entry sites are guarded (dirty_ram_dispatch_inner, the interpreter's
+interp_enter_compiled, and overlay_loader's psx_sljit_call). BIOS-only builds
+register no image, so the guard is inert there.
+
+Result: Tekken 3 boots past the old PC=0 exit, streams and MDEC-decodes its
+intro FMV, and renders the attract-mode fight in real-time 3D (screenshots
+above). Kula World regression-checked with the guard armed: still reaches its
+title menu.
+
+### Open items
+
+1. The rewritten ~448 KB region currently runs interpreted. The overlay
+   capture→compile→cache machinery covers phys ≥ 0x98000, so it can be made
+   native the standard way (capture the unpacked bytes, compile, dispatch).
+2. During the Tekken run the TCP debug server stopped accepting connections
+   after the first minutes (connection refused; X11 capture used instead).
+   Not yet diagnosed — needs a look before the next deep investigation.
+3. Menu input, a real fight, CDDA music (tracks 2/3) and SPU audio are
+   unverified.
